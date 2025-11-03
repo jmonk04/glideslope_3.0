@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NTAG Southwest - Triton Glideslope Calculator</title>
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.10.3/dist/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <div id="loading" style="display: flex; justify-content: center; align-items: center; height: 100vh; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #334155 100%); color: white; font-family: sans-serif; font-size: 2rem;">
+        Loading Triton Glideslope Calculator... 🔱
+    </div>
+
+    <script type="text/babel">
+        // Hide loading message once React loads
+        document.getElementById('loading').style.display = 'none';
+        
+        const { useState, useMemo } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+
+        const GlideslopeCalculator = () => {
+          const [annualGoal, setAnnualGoal] = useState(3200);
+          const [actualToDate, setActualToDate] = useState(0);
+          const [todayDate, setTodayDate] = useState(new Date().toISOString().split('T')[0]);
+          const [orgName, setOrgName] = useState('NTAG Southwest');
+          const [attrition, setAttrition] = useState(0.03);
+          const [darkMode, setDarkMode] = useState(false);
+          const [step1Complete, setStep1Complete] = useState(false);
+          
+          const [missionType, setMissionType] = useState('');
+          const [targetDate, setTargetDate] = useState('2026-06-30');
+          const [targetTier, setTargetTier] = useState('poseidon');
+          const [conversion, setConversion] = useState(0.75);
+          const [pateContacts, setPateContacts] = useState(100);
+          const [pateAppointments, setPateAppointments] = useState(25);
+          const [pateInterviews, setPateInterviews] = useState(10);
+          const [pateQualifiedInterviews, setPateQualifiedInterviews] = useState(5);
+          const [step2Complete, setStep2Complete] = useState(false);
+
+          const stationData = {
+            "Division 1 (PRIMETIME)": [
+              { name: "CHULA VISTA", goal: 144 }, { name: "COLLEGE GROVE", goal: 76 }, { name: "EL CAJON", goal: 109 },
+              { name: "IMPERIAL BEACH", goal: 84 }, { name: "NATIONAL CITY", goal: 155 }, { name: "YUMA", goal: 57 }
+            ],
+            "Division 2 (AVENGERS)": [
+              { name: "ESCONDIDO", goal: 77 }, { name: "CLAIREMONT", goal: 94 }, { name: "MIRA MESA", goal: 60 },
+              { name: "OCEANSIDE", goal: 131 }, { name: "POWAY", goal: 61 }
+            ],
+            "Division 3 (SLUGGERS)": [
+              { name: "ANAHEIM", goal: 65 }, { name: "GARDEN GROVE", goal: 57 }, { name: "HUNTINGTON BEACH", goal: 65 },
+              { name: "MISSION VIEJO", goal: 68 }, { name: "SANTA ANA", goal: 71 }
+            ],
+            "Division 4 (REGULATORS)": [
+              { name: "HEMET", goal: 74 }, { name: "MORENO VALLEY", goal: 80 }, { name: "PALM DESERT", goal: 80 },
+              { name: "SUN CITY", goal: 77 }, { name: "TEMECULA", goal: 168 }
+            ],
+            "Division 5 (EMPIRE)": [
+              { name: "BREA", goal: 85 }, { name: "CORONA", goal: 83 }, { name: "RANCHO CUCAMONGA", goal: 81 },
+              { name: "RIVERSIDE", goal: 101 }, { name: "UPLAND", goal: 95 }
+            ],
+            "Division 6 (OUTLAWS)": [
+              { name: "FONTANA", goal: 77 }, { name: "REDLANDS", goal: 87 }, { name: "SAN BERNARDINO", goal: 96 },
+              { name: "VICTORVILLE", goal: 122 }
+            ],
+            "Division 7 (KNIGHTS)": [
+              { name: "HENDERSON", goal: 106 }, { name: "LAS VEGAS", goal: 85 }, { name: "NORTHERN LIGHTS", goal: 129 },
+              { name: "RED ROCK", goal: 77 }, { name: "SPRING VALLEY", goal: 89 }
+            ]
+          };
+
+          const handleStationChange = (e) => {
+            const parts = e.target.value.split('|');
+            setOrgName(parts[0]);
+            setAnnualGoal(parseInt(parts[1]));
+          };
+
+          const FY_START = new Date('2025-10-01');
+          const FY_END = new Date('2026-09-30');
+          const PROD_DAYS_PER_MONTH = {
+            '2025-10': 21, '2025-11': 17, '2025-12': 14, '2026-01': 20, '2026-02': 19, '2026-03': 21,
+            '2026-04': 22, '2026-05': 20, '2026-06': 21, '2026-07': 22, '2026-08': 20, '2026-09': 20
+          };
+          const SPECIFIC_NON_PROD_DAYS = [
+            '2025-10-10', '2025-11-11', '2025-12-05', '2025-12-20', '2025-12-21', '2025-12-22', '2025-12-23',
+            '2025-12-24', '2025-12-25', '2025-12-26', '2025-12-27', '2025-12-28', '2025-12-29', '2025-12-30',
+            '2025-12-31', '2026-01-01'
+          ];
+
+          const getProductionDays = useMemo(() => {
+            const nonProdSet = new Set(SPECIFIC_NON_PROD_DAYS);
+            const days = [];
+            let current = new Date(FY_START);
+            let prodDayIndex = 0;
+            const monthlyProdCounts = {};
+            
+            while (current <= FY_END) {
+              const dateStr = current.toISOString().split('T')[0];
+              const monthKey = dateStr.substring(0, 7);
+              const isWeekend = current.getDay() === 0 || current.getDay() === 6;
+              const isProd = !isWeekend && !nonProdSet.has(dateStr);
+              
+              if (isProd) {
+                if (!monthlyProdCounts[monthKey]) monthlyProdCounts[monthKey] = 0;
+                if (monthlyProdCounts[monthKey] < PROD_DAYS_PER_MONTH[monthKey]) {
+                  prodDayIndex++;
+                  monthlyProdCounts[monthKey]++;
+                } else {
+                  days.push({ date: new Date(current), isProd: false, prodDayIndex });
+                  current.setDate(current.getDate() + 1);
+                  continue;
+                }
+              }
+              days.push({ date: new Date(current), isProd, prodDayIndex });
+              current.setDate(current.getDate() + 1);
+            }
+            return days;
+          }, []);
+
+          const totalProdDays = getProductionDays[getProductionDays.length - 1].prodDayIndex;
+          const getProdDayForDate = (dateStr) => {
+            const target = new Date(dateStr);
+            const day = getProductionDays.find(d => d.date.toDateString() === target.toDateString());
+            return day ? day.prodDayIndex : 0;
+          };
+
+          const currentProdDay = getProdDayForDate(todayDate);
+          const targetProdDay = getProdDayForDate(targetDate);
+          const adjustedAnnualGoal = annualGoal * (1 + attrition);
+          const baselineReqToday = (currentProdDay / totalProdDays) * adjustedAnnualGoal;
+          const deltaVsBaseline = actualToDate - baselineReqToday;
+          const currentPace = currentProdDay > 0 ? actualToDate / currentProdDay : 0;
+          const projectedEndTotal = currentPace * totalProdDays;
+          const projectedVsGoal = projectedEndTotal - adjustedAnnualGoal;
+
+          const getCurrentTier = () => {
+            if (baselineReqToday === 0) return { name: 'N/A', pct: 0, color: 'gray', icon: '' };
+            const performancePct = (actualToDate / baselineReqToday) * 100;
+            if (performancePct >= 140) return { name: 'Zeus', pct: performancePct, color: 'pink', icon: '⚡' };
+            if (performancePct >= 120) return { name: 'Poseidon', pct: performancePct, color: 'purple', icon: '🔱' };
+            if (performancePct >= 100) return { name: 'Triton', pct: performancePct, color: 'blue', icon: '' };
+            return { name: 'Below Triton', pct: performancePct, color: 'red', icon: '' };
+          };
+
+          const currentTierStatus = getCurrentTier();
+
+          const getNextTierFromCurrent = () => {
+            if (currentTierStatus.name === 'Below Triton' || currentTierStatus.name === 'Triton') {
+              return { name: 'Poseidon', multiplier: 1.20 };
+            }
+            if (currentTierStatus.name === 'Poseidon') {
+              return { name: 'Zeus', multiplier: 1.40 };
+            }
+            return null;
+          };
+
+          const nextTierFromCurrent = getNextTierFromCurrent();
+
+          const tierMultipliers = { triton: 1.00, poseidon: 1.20, zeus: 1.40 };
+          const remainingDaysToTarget = Math.max(targetProdDay - currentProdDay, 0);
+          
+          let planTargetContracts = 0;
+          let planContractsPerDay = 0;
+          let planProjectionsPerDay = 0;
+          let planContractsPerWeek = 0;
+          let planProjectionsPerWeek = 0;
+
+          if (missionType === 'recovery') {
+            planTargetContracts = baselineReqToday + (remainingDaysToTarget * (adjustedAnnualGoal / totalProdDays));
+            planContractsPerDay = remainingDaysToTarget > 0 ? (planTargetContracts - actualToDate) / remainingDaysToTarget : 0;
+          } else if (missionType === 'incentive') {
+            const tierPct = tierMultipliers[targetTier];
+            planTargetContracts = (targetProdDay / totalProdDays) * adjustedAnnualGoal * tierPct;
+            planContractsPerDay = remainingDaysToTarget > 0 ? (planTargetContracts - actualToDate) / remainingDaysToTarget : 0;
+          } else if (missionType === 'both') {
+            const tierPct = tierMultipliers[targetTier];
+            planTargetContracts = (targetProdDay / totalProdDays) * adjustedAnnualGoal * tierPct;
+            planContractsPerDay = remainingDaysToTarget > 0 ? (planTargetContracts - actualToDate) / remainingDaysToTarget : 0;
+          }
+
+          planProjectionsPerDay = conversion > 0 ? planContractsPerDay / conversion : 0;
+          planContractsPerWeek = planContractsPerDay * 5;
+          planProjectionsPerWeek = planProjectionsPerDay * 5;
+
+          const planPateContactsPerWeek = planProjectionsPerDay * pateContacts * 5;
+          const planPateAppointmentsPerWeek = planProjectionsPerDay * pateAppointments * 5;
+          const planPateInterviewsPerWeek = planProjectionsPerDay * pateInterviews * 5;
+          const planPateQualifiedInterviewsPerWeek = planProjectionsPerDay * pateQualifiedInterviews * 5;
+
+          const chartData = useMemo(() => {
+            const data = [];
+            const pace = currentProdDay > 0 ? actualToDate / currentProdDay : 0;
+            
+            for (let i = 1; i <= totalProdDays; i++) {
+              const baselineValue = (i / totalProdDays) * adjustedAnnualGoal;
+              let actualValue = null;
+              if (i <= currentProdDay) actualValue = (i / currentProdDay) * actualToDate;
+              let paceValue = null;
+              if (i >= currentProdDay && pace > 0) paceValue = actualToDate + ((i - currentProdDay) * pace);
+              data.push({ day: i, baseline: baselineValue, actual: actualValue, pace: paceValue });
+            }
+            return data;
+          }, [totalProdDays, adjustedAnnualGoal, currentProdDay, actualToDate]);
+
+          return (
+            <div className={`min-h-screen ${darkMode ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-slate-900' : 'bg-gradient-to-br from-blue-900 via-blue-800 to-slate-900'} text-white p-4 transition-colors duration-300`}>
+              <div className="max-w-7xl mx-auto">
+                <div className="flex justify-end pt-4 pb-2">
+                  <button onClick={() => setDarkMode(!darkMode)} className={`px-4 py-2 rounded-lg font-semibold transition-all ${darkMode ? 'bg-yellow-500 text-gray-900 hover:bg-yellow-400' : 'bg-gray-800 text-yellow-300 hover:bg-gray-700'}`}>
+                    {darkMode ? '☀️ Sun Mode' : '🌙 Moon Mode'}
+                  </button>
+                </div>
+
+                <div className="mb-8 pt-4">
+                  <div className="flex flex-col items-center relative">
+                    <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-400 to-transparent"></div>
+                    <div className="flex items-center gap-8 mb-6 mt-4">
+                      <div className="text-8xl drop-shadow-2xl">🔱</div>
+                      <div className="text-center">
+                        <h1 className="text-6xl font-bold tracking-tight text-white">{orgName}</h1>
+                        <p className="text-2xl text-blue-200 mt-3 font-light tracking-wide">TRITON GLIDESLOPE CALCULATOR</p>
+                        <p className="text-base text-blue-400 mt-2 font-medium tracking-wider italic">To the Moon 🚀</p>
+                      </div>
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-400 to-transparent"></div>
+                  </div>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 mb-6">
+                  <h2 className="text-3xl font-bold mb-4">📊 STEP 1: Glideslope Assessment</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Select Your Station</label>
+                      <select onChange={handleStationChange} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-blue-400 text-white">
+                        <option value="">-- Select Station --</option>
+                        {Object.entries(stationData).map(([division, stations]) => (
+                          <optgroup key={division} label={division}>
+                            {stations.map(station => (
+                              <option key={station.name} value={`${station.name}|${station.goal}`}>{station.name} (Goal: {station.goal})</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Today's Date</label>
+                      <input type="date" value={todayDate} onChange={(e) => setTodayDate(e.target.value)} min="2025-10-01" max="2026-09-30" className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-blue-400 text-white" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Annual Goal (ALNAV)</label>
+                      <input type="number" value={annualGoal} onChange={(e) => setAnnualGoal(Number(e.target.value))} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-blue-400 text-white" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Actual Contracts to Date</label>
+                      <input type="number" value={actualToDate} onChange={(e) => setActualToDate(Number(e.target.value))} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-blue-400 text-white" />
+                    </div>
+                  </div>
+                  <button onClick={() => setStep1Complete(true)} className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                    Assess Glideslope
+                  </button>
+                </div>
+
+                {step1Complete && (
+                  <>
+                    <div className={`${darkMode ? 'bg-yellow-900/40' : 'bg-yellow-500/20'} border-l-4 border-yellow-500 rounded p-4 mb-6`}>
+                      <p className="text-2xl font-bold mb-2">
+                        Recruiting Warrior! You are <span className={`${deltaVsBaseline >= 0 ? 'text-green-300' : 'text-red-300'}`}>{Math.abs(deltaVsBaseline).toFixed(0)} contracts {deltaVsBaseline >= 0 ? 'ABOVE' : 'BELOW'} glideslope</span> {deltaVsBaseline >= 0 ? '📈' : '📉'}
+                      </p>
+                      <p className={`text-lg font-semibold italic ${deltaVsBaseline >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                        {deltaVsBaseline >= 0 ? "You are well on your way to the moon! Keep it up! 🚀" : "You won't make it to the moon with production like that! Let's get you back on track! 🌙"}
+                      </p>
+                    </div>
+
+                    <div className={`${darkMode ? 'bg-gray-800/80' : 'bg-white/10'} backdrop-blur-md rounded-lg p-6 mb-6 border-2 ${deltaVsBaseline >= 0 ? 'border-green-500' : 'border-red-500'}`}>
+                      <div className="mb-4">
+                        <h2 className="text-3xl font-bold mb-4">📋 SITREP for {new Date(todayDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</h2>
+                        <div className="flex justify-center">
+                          <div className={`px-6 py-3 rounded-lg border-4 shadow-lg ${currentTierStatus.color === 'red' ? 'border-red-400 bg-red-500/30' : 'border-green-400 bg-green-500/40'}`}>
+                            <p className="text-xs text-gray-200 uppercase tracking-wide text-center">Current Tier</p>
+                            <p className={`text-3xl font-bold text-center ${
+                              currentTierStatus.color === 'pink' ? 'text-pink-200' :
+                              currentTierStatus.color === 'purple' ? 'text-purple-200' :
+                              currentTierStatus.color === 'blue' ? 'text-blue-200' :
+                              'text-red-200'
+                            }`}>
+                              {currentTierStatus.icon} {currentTierStatus.name} {currentTierStatus.icon}
+                            </p>
+                            <p className="text-sm text-gray-300 font-semibold text-center">{currentTierStatus.pct.toFixed(1)}% of ALNAV requirement</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className={`${darkMode ? 'bg-gray-700/50' : 'bg-white/20'} rounded-lg p-4`}>
+                          <p className="text-sm text-gray-300 mb-1">Glideslope Status</p>
+                          <p className={`text-3xl font-bold ${deltaVsBaseline >= 0 ? 'text-green-400' : 'text-red-400'}`}>{deltaVsBaseline >= 0 ? '+' : ''}{deltaVsBaseline.toFixed(0)}</p>
+                          <p className="text-xs mt-1 font-bold">{deltaVsBaseline >= 0 ? 'contracts above' : 'contracts below'} ({baselineReqToday.toFixed(1)} req)</p>
+                        </div>
+                        <div className={`${darkMode ? 'bg-gray-700/50' : 'bg-white/20'} rounded-lg p-4`}>
+                          <p className="text-sm text-gray-300 mb-1">Current Pace</p>
+                          <p className="text-3xl font-bold text-blue-400">{currentPace.toFixed(2)}</p>
+                          <p className="text-xs mt-1">Contracts/Day</p>
+                        </div>
+                        <div className={`${darkMode ? 'bg-gray-700/50' : 'bg-white/20'} rounded-lg p-4`}>
+                          <p className="text-sm text-gray-300 mb-1">Projected EOY</p>
+                          <p className={`text-3xl font-bold ${projectedVsGoal >= 0 ? 'text-green-400' : 'text-yellow-400'}`}>{projectedEndTotal.toFixed(0)}</p>
+                          <p className="text-xs mt-1">{projectedVsGoal >= 0 ? '+' : ''}{projectedVsGoal.toFixed(0)} vs Goal</p>
+                        </div>
+                        <div className={`${darkMode ? 'bg-gray-700/50' : 'bg-white/20'} rounded-lg p-4`}>
+                          {nextTierFromCurrent ? (
+                            <>
+                              <p className="text-sm text-gray-300 mb-1">Contracts for {nextTierFromCurrent.name}</p>
+                              <p className="text-3xl font-bold text-purple-400">{Math.max(0, Math.ceil((adjustedAnnualGoal * nextTierFromCurrent.multiplier * (currentProdDay / totalProdDays)) - actualToDate))}</p>
+                              <p className="text-xs mt-1">more needed today</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm text-gray-300 mb-1">Next Tier</p>
+                              <p className="text-3xl font-bold text-gray-400">--</p>
+                              <p className="text-xs mt-1">At Zeus! 🏆</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`${darkMode ? 'bg-gray-800/80' : 'bg-white/10'} backdrop-blur-md rounded-lg p-6 mb-6`}>
+                      <h3 className="text-xl font-bold mb-4">Progress Visualization</h3>
+                      <ResponsiveContainer width="100%" height={400}>
+                        <LineChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                          <XAxis dataKey="day" stroke="rgba(255,255,255,0.7)" label={{ value: 'Production Day', position: 'insideBottom', offset: -5, fill: 'rgba(255,255,255,0.7)' }} />
+                          <YAxis stroke="rgba(255,255,255,0.7)" label={{ value: 'Cumulative Contracts', angle: -90, position: 'insideLeft', fill: 'rgba(255,255,255,0.7)' }} />
+                          <Tooltip contentStyle={{ backgroundColor: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,255,255,0.3)' }} />
+                          <Legend />
+                          <Line type="monotone" dataKey="baseline" stroke="#60a5fa" name="Glideslope (100%)" dot={false} strokeWidth={2} />
+                          <Line type="monotone" dataKey="actual" stroke="#34d399" name="Actual" strokeWidth={3} dot={false} />
+                          <Line type="monotone" dataKey="pace" stroke="#fbbf24" name="Current Pace" strokeWidth={2} strokeDasharray="3 3" dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-purple-500/20 to-blue-500/20 backdrop-blur-md rounded-lg p-6 mb-6 border-2 border-purple-400">
+                      <h2 className="text-3xl font-bold mb-4">🎯 STEP 2: Build Your Mission Plan</h2>
+                      <p className="text-lg mb-4">Choose your objective:</p>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <button onClick={() => setMissionType('recovery')} className={`p-6 rounded-lg border-2 transition-all ${missionType === 'recovery' ? 'border-green-400 bg-green-500/30' : 'border-white/30 bg-white/10 hover:border-green-400/50'}`}>
+                          <p className="text-2xl mb-2">⚡</p>
+                          <p className="font-bold text-lg">Recovery Plan</p>
+                          <p className="text-sm text-gray-300">Get back on glideslope</p>
+                        </button>
+                        
+                        <button onClick={() => setMissionType('incentive')} className={`p-6 rounded-lg border-2 transition-all ${missionType === 'incentive' ? 'border-purple-400 bg-purple-500/30' : 'border-white/30 bg-white/10 hover:border-purple-400/50'}`}>
+                          <p className="text-2xl mb-2">🏆</p>
+                          <p className="font-bold text-lg">Incentive Tier Plan</p>
+                          <p className="text-sm text-gray-300">Hit Poseidon or Zeus</p>
+                        </button>
+                        
+                        <button onClick={() => setMissionType('both')} className={`p-6 rounded-lg border-2 transition-all ${missionType === 'both' ? 'border-yellow-400 bg-yellow-500/30' : 'border-white/30 bg-white/10 hover:border-yellow-400/50'}`}>
+                          <p className="text-2xl mb-2">🚀</p>
+                          <p className="font-bold text-lg">Both</p>
+                          <p className="text-sm text-gray-300">Recovery + Incentive</p>
+                        </button>
+                      </div>
+
+                      {missionType && (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                            <div>
+                              <label className="block text-sm font-medium mb-1">Target Date</label>
+                              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} min={todayDate} max="2026-09-30" className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-purple-400 text-white" />
+                            </div>
+                            
+                            {(missionType === 'incentive' || missionType === 'both') && (
+                              <div>
+                                <label className="block text-sm font-medium mb-1">Target Tier</label>
+                                <select value={targetTier} onChange={(e) => setTargetTier(e.target.value)} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-purple-400 text-white">
+                                  <option value="triton">Triton (100%)</option>
+                                  <option value="poseidon">Poseidon (120%)</option>
+                                  <option value="zeus">Zeus (140%)</option>
+                                </select>
+                              </div>
+                            )}
+                            
+                            <div>
+                              <label className="block text-sm font-medium mb-1">Conversion Rate</label>
+                              <input type="number" value={conversion} onChange={(e) => setConversion(Number(e.target.value))} step="0.01" min="0.01" max="1" className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 focus:outline-none focus:ring-2 focus:ring-purple-400 text-white" />
+                            </div>
+                          </div>
+
+                          <div className="bg-purple-900/30 rounded-lg p-4 mb-4">
+                            <h3 className="font-bold text-lg mb-3">📊 PATE Configuration (per contract)</h3>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div>
+                                <label className="block text-sm mb-1">Contacts</label>
+                                <input type="number" value={pateContacts} onChange={(e) => setPateContacts(Number(e.target.value))} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 text-white" />
+                              </div>
+                              <div>
+                                <label className="block text-sm mb-1">Appointments</label>
+                                <input type="number" value={pateAppointments} onChange={(e) => setPateAppointments(Number(e.target.value))} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 text-white" />
+                              </div>
+                              <div>
+                                <label className="block text-sm mb-1">Interviews</label>
+                                <input type="number" value={pateInterviews} onChange={(e) => setPateInterviews(Number(e.target.value))} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 text-white" />
+                              </div>
+                              <div>
+                                <label className="block text-sm mb-1">Qualified</label>
+                                <input type="number" value={pateQualifiedInterviews} onChange={(e) => setPateQualifiedInterviews(Number(e.target.value))} className="w-full px-3 py-2 bg-white/20 rounded border border-white/30 text-white" />
+                              </div>
+                            </div>
+                          </div>
+
+                          <button onClick={() => setStep2Complete(true)} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                            Generate Mission Plan
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {step2Complete && missionType && (
+                      <>
+                        <div className="bg-gradient-to-r from-blue-500/20 to-green-500/20 backdrop-blur-md rounded-lg p-6 mb-6 border-2 border-blue-400">
+                          <h2 className="text-3xl font-bold mb-4">📋 Your Action Plan</h2>
+                          
+                          <div className="bg-blue-900/40 rounded-lg p-5 mb-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <h3 className="text-2xl font-bold text-blue-200">
+                                {missionType === 'recovery' ? '⚡ Recovery Plan' : 
+                                 missionType === 'incentive' ? '🏆 Incentive Tier Plan' : 
+                                 '🚀 Recovery + Incentive Plan'}
+                              </h3>
+                              {(missionType === 'incentive' || missionType === 'both') && (
+                                <span className="text-xl font-bold text-blue-300">{targetTier.charAt(0).toUpperCase() + targetTier.slice(1)} ({(tierMultipliers[targetTier] * 100).toFixed(0)}%)</span>
+                              )}
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                              <div className="bg-blue-800/50 rounded p-3">
+                                <p className="text-sm text-blue-200 mb-1">Target Date</p>
+                                <p className="text-2xl font-bold">{new Date(targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                                <p className="text-xs mt-1">{remainingDaysToTarget} production days</p>
+                              </div>
+                              <div className="bg-blue-800/50 rounded p-3">
+                                <p className="text-sm text-blue-200 mb-1">Contracts Per Week</p>
+                                <p className="text-3xl font-bold text-yellow-300">{planContractsPerWeek.toFixed(1)}</p>
+                                <p className="text-xs mt-1">actual contracts needed</p>
+                              </div>
+                              <div className="bg-blue-800/50 rounded p-3">
+                                <p className="text-sm text-blue-200 mb-1">Projections Per Week</p>
+                                <p className="text-3xl font-bold text-yellow-300">{planProjectionsPerWeek.toFixed(1)}</p>
+                                <p className="text-xs mt-1">w/ {(conversion * 100).toFixed(0)}% conversion</p>
+                              </div>
+                            </div>
+
+                            <div className="bg-blue-900/60 rounded p-3 mb-4">
+                              <p className="text-sm text-blue-200 mb-1">Daily Target</p>
+                              <p className="text-2xl font-bold text-yellow-300">{planProjectionsPerDay.toFixed(1)} projections per day</p>
+                            </div>
+
+                            <div className="bg-blue-950/50 rounded-lg p-4">
+                              <h4 className="font-bold text-lg mb-3 text-blue-100">📋 Required Weekly Activity:</h4>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div className="text-center">
+                                  <p className="text-2xl font-bold text-green-300">{planPateContactsPerWeek.toFixed(0)}</p>
+                                  <p className="text-xs text-blue-200">Contacts</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="text-2xl font-bold text-green-300">{planPateAppointmentsPerWeek.toFixed(0)}</p>
+                                  <p className="text-xs text-blue-200">Appointments</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="text-2xl font-bold text-green-300">{planPateInterviewsPerWeek.toFixed(0)}</p>
+                                  <p className="text-xs text-blue-200">Interviews</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="text-2xl font-bold text-green-300">{planPateQualifiedInterviewsPerWeek.toFixed(0)}</p>
+                                  <p className="text-xs text-blue-200">Qualified</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 mb-6 no-print">
+                          <button onClick={() => window.print()} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                            🖨️ Print Weekly Battle Rhythm
+                          </button>
+                        </div>
+
+                        <div id="weekly-battle-rhythm" className="bg-white text-black p-8 rounded-lg mb-6">
+                          <div className="text-center border-b-4 border-black pb-4 mb-6">
+                            <h1 className="text-4xl font-bold">{orgName}</h1>
+                            <h2 className="text-2xl font-semibold mt-2">WEEKLY BATTLE RHYTHM</h2>
+                            <p className="text-lg mt-2">Week of: {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
+                          </div>
+                          <div className="mb-6">
+                            <h3 className="text-2xl font-bold border-b-2 border-black pb-2 mb-3">📊 CURRENT STATUS</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="border-2 border-black p-3">
+                                <p className="font-bold">Contracts to Date:</p>
+                                <p className="text-3xl font-bold">{actualToDate}</p>
+                              </div>
+                              <div className="border-2 border-black p-3">
+                                <p className="font-bold">Glideslope Status:</p>
+                                <p className="text-2xl font-bold">{Math.abs(deltaVsBaseline).toFixed(0)} {deltaVsBaseline >= 0 ? 'ABOVE ✓' : 'BELOW ✗'}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mb-6">
+                            <h3 className="text-2xl font-bold border-b-2 border-black pb-2 mb-3">🎯 THIS WEEK</h3>
+                            <div className="border-4 border-black p-4 bg-gray-100">
+                              <p className="text-xl font-bold">NEEDED:</p>
+                              <p className="text-4xl font-bold">{planProjectionsPerWeek.toFixed(1)} Projections</p>
+                            </div>
+                          </div>
+                          <div className="mb-6">
+                            <h3 className="text-2xl font-bold border-b-2 border-black pb-2 mb-3">📋 PATE</h3>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="border-2 border-black p-3"><p className="font-bold">Contacts:</p><p className="text-2xl font-bold">{planPateContactsPerWeek.toFixed(0)}</p></div>
+                              <div className="border-2 border-black p-3"><p className="font-bold">Appointments:</p><p className="text-2xl font-bold">{planPateAppointmentsPerWeek.toFixed(0)}</p></div>
+                              <div className="border-2 border-black p-3"><p className="font-bold">Interviews:</p><p className="text-2xl font-bold">{planPateInterviewsPerWeek.toFixed(0)}</p></div>
+                              <div className="border-2 border-black p-3"><p className="font-bold">Qualified:</p><p className="text-2xl font-bold">{planPateQualifiedInterviewsPerWeek.toFixed(0)}</p></div>
+                            </div>
+                          </div>
+                          <div className="text-center border-t-2 border-black pt-4 mt-6">
+                            <p className="text-xl font-bold">🔱 TO THE MOON 🚀</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        // Wait for all libraries to load
+        if (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined' && typeof Recharts !== 'undefined') {
+          ReactDOM.render(<GlideslopeCalculator />, document.getElementById('root'));
+        } else {
+          setTimeout(() => {
+            if (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined' && typeof Recharts !== 'undefined') {
+              ReactDOM.render(<GlideslopeCalculator />, document.getElementById('root'));
+            } else {
+              document.getElementById('root').innerHTML = '<div style="color: white; text-align: center; padding: 50px;">Error loading libraries. Please refresh the page.</div>';
+            }
+          }, 2000);
+        }
+    </script>
+
+    <style>
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                background: white !important;
+            }
+            #weekly-battle-rhythm {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</body>
+</html>
